@@ -1,0 +1,9 @@
+easyocr
+streamlit
+requests
+opencv-python
+opencv-contrib-python
+pillow
+pytesseract
+spacy
+rapidfuzz
