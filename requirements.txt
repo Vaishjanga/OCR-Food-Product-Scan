@@ -10,3 +10,7 @@ rapidfuzz
 textblob
 urllib3
 logging
+pandas
+numpy
+regex
+Pillow-SIMD  
