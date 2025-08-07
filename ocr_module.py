@@ -9,6 +9,7 @@ import spacy
 from rapidfuzz import fuzz, process
 from collections import defaultdict
 import logging
+from textblob import TextBlob
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -82,86 +83,88 @@ def enhanced_fuzzy_find_keyword(line, keyword_list, threshold=70):
 
 def advanced_preprocess_image(image_path, target_method='combined'):
     """
-    Multiple preprocessing strategies for different OCR engines
+    Improved OpenCV preprocessing without deep learning models.
+    Applies denoising, CLAHE, adaptive resizing, gamma correction,
+    and multiple thresholding strategies.
     """
     img = cv2.imread(image_path)
     if img is None:
         return [image_path]
     
     preprocessed_images = []
-    
-    # Strategy 1: Standard preprocessing
+
+    # Resize to optimal width (~1300px)
+    height, width = img.shape[:2]
+    target_width = 1300
+    if width != target_width:
+        scale = target_width / float(width)
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+    # Convert to grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # Resize if needed
-    height, width = gray.shape
-    if width < 1000:
-        scale = 1000 / width
-        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-    
+
     # Denoise
     denoised = cv2.fastNlMeansDenoising(gray, h=10)
-    
-    # CLAHE
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+
+    # CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(denoised)
-    
-    # Multiple thresholding approaches
-    thresh1 = cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                   cv2.THRESH_BINARY, 31, 10)
-    
-    # Strategy 2: Different thresholding
-    thresh2 = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    
-    # Strategy 3: Morphological operations
-    kernel = np.ones((1,1), np.uint8)
-    morph1 = cv2.morphologyEx(thresh1, cv2.MORPH_CLOSE, kernel)
-    
-    # Save different versions
-    temp_paths = []
-    for i, processed in enumerate([thresh1, thresh2, morph1]):
+
+    # Gamma correction
+    gamma = 1.2
+    look_up_table = np.array([((i / 255.0) ** gamma) * 255
+                              for i in range(256)]).astype("uint8")
+    gamma_corrected = cv2.LUT(enhanced, look_up_table)
+
+    # Add sharpening (before thresholding)
+    sharpen_kernel = np.array([[0, -1, 0], [-1, 5,-1], [0, -1, 0]])
+    img = cv2.filter2D(img, -1, sharpen_kernel)
+
+
+    # Apply multiple thresholding techniques
+    thresh1 = cv2.adaptiveThreshold(gamma_corrected, 255,
+                                    cv2.ADAPTIVE_THRESH_MEAN_C,
+                                    cv2.THRESH_BINARY, 15, 10)
+
+    thresh2 = cv2.threshold(gamma_corrected, 0, 255,
+                            cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+    kernel = np.ones((1, 1), np.uint8)
+    morph = cv2.morphologyEx(thresh1, cv2.MORPH_CLOSE, kernel)
+
+    versions = [thresh1, thresh2, morph]
+    for i, version in enumerate(versions):
         temp_path = f"preprocessed_temp_{i}.jpg"
-        cv2.imwrite(temp_path, processed)
-        temp_paths.append(temp_path)
+        cv2.imwrite(temp_path, version)
         preprocessed_images.append(temp_path)
-    
+
     return preprocessed_images
 
 def extract_text_multiple_methods(image_path):
     """
-    Extract text using multiple preprocessing and OCR combinations
+    Extract text using multiple preprocessing and Tesseract OCR combinations
     """
     preprocessed_images = advanced_preprocess_image(image_path)
     all_results = []
-    
+
     # Tesseract configurations
     tesseract_configs = [
         r'--oem 3 --psm 6',
         r'--oem 3 --psm 4',
         r'--oem 3 --psm 11',
-        r'--oem 1 --psm 6'
+        r'--oem 1 --psm 6',
+        r'--dpi 300 --psm 6',
     ]
-    
-    # Try each preprocessing with each config
+
     for prep_img in preprocessed_images:
         for config in tesseract_configs:
             try:
                 text = pytesseract.image_to_string(Image.open(prep_img), config=config)
                 if text.strip():
-                    all_results.append(clean_text(text))
+                    all_results.append(clean_text(text, apply_spellcheck=True))
             except Exception as e:
                 logger.warning(f"Tesseract failed with config {config}: {e}")
-        
-        # EasyOCR
-        try:
-            reader = easyocr.Reader(['en'], gpu=False, verbose=False)
-            result = reader.readtext(prep_img, detail=1, paragraph=True)
-            confident_results = [r[1] for r in result if r[2] > 0.3]
-            if confident_results:
-                all_results.append(clean_text(" ".join(confident_results)))
-        except Exception as e:
-            logger.warning(f"EasyOCR failed: {e}")
-    
+
     # Clean up temp files
     for temp_path in preprocessed_images:
         if temp_path != image_path and os.path.exists(temp_path):
@@ -169,48 +172,62 @@ def extract_text_multiple_methods(image_path):
                 os.remove(temp_path)
             except Exception:
                 pass
-    
+
     # Return the best result (longest meaningful text)
     if all_results:
-        # Score results by length and word count
         scored_results = []
         for text in all_results:
             words = len(text.split())
             chars = len(text)
-            score = words * 2 + chars  # Prefer results with more words
+            score = words * 2 + chars
             scored_results.append((score, text))
-        
+
         best_result = max(scored_results, key=lambda x: x[0])[1]
         return best_result
-    
+
     return ""
 
-def clean_text(text):
-    """Enhanced text cleaning"""
+
+def clean_text(text, apply_spellcheck=True):
+    """Enhanced text cleaning with optional spelling correction using TextBlob."""
     if not text:
         return ""
-    
-    # Remove extra whitespace
+
+    # Normalize whitespace
     text = re.sub(r'\s+', ' ', text)
-    
-    # Fix common OCR errors
+
+    # Fix common OCR-specific errors
     ocr_fixes = {
         r'\b0(?=\w)': 'O',  # 0 -> O at word start
         r'(?<=\w)0\b': 'O',  # 0 -> O at word end
-        r'\bl(?=\w)': 'I',   # l -> I in some cases
+        r'\bl(?=\w)': 'I',   # l -> I
         r'rn': 'm',          # rn -> m
         r'cl': 'd',          # cl -> d
         r'vv': 'w',          # vv -> w
     }
-    
+
     for pattern, replacement in ocr_fixes.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-    
-    # Remove obviously wrong characters
+
+    # Remove unwanted characters
     text = re.sub(r'[^\w\s.,;:()%-/&\[\]{}]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
-    
+
+    # Optional spelling correction with TextBlob
+    blob = TextBlob(text)
+    if blob.sentiment.polarity == 0 and len(text) < 10:
+        return ""  # likely noise
+
+
+    if apply_spellcheck and len(text.split()) <= 100:  # Avoid very long texts for performance
+        try:
+            blob = TextBlob(text)
+            text = str(blob.correct())
+        except Exception as e:
+            logger.warning(f"TextBlob correction failed: {e}")
+
     return text
+
 
 def advanced_parse_ocr_text(text):
     """
@@ -357,16 +374,44 @@ def advanced_parse_ocr_text(text):
     
     return result
 
+def ensure_dpi(img_path, min_dpi=150):
+    from PIL import Image
+    img = Image.open(img_path)
+    dpi = img.info.get('dpi', (72, 72))[0]
+    if dpi < min_dpi:
+        scale = min_dpi / dpi
+        new_size = (int(img.width * scale), int(img.height * scale))
+        img = img.resize(new_size, Image.LANCZOS)
+        temp_path = "upsampled_dpi_temp.jpg"
+        img.save(temp_path, dpi=(min_dpi, min_dpi))
+        return temp_path
+    return img_path
+
 def extract_product_info(image_path):
     """
-    Main function to extract all product information
+    Main function to extract all product information with enhanced OCR
     """
     logger.info(f"Processing image: {image_path}")
-    
-    # Extract text using multiple methods
-    extracted_text = extract_text_multiple_methods(image_path)
-    
-    if not extracted_text:
+
+    # Ensure minimum DPI
+    image_path = ensure_dpi(image_path, min_dpi=150)
+
+    if not os.path.exists(image_path):
+        logger.error(f"Image file not found: {image_path}")
+        return {
+            'product_name': 'N/A',
+            'ingredients_text': 'N/A',
+            'nutriments': {},
+            'brands': 'N/A',
+            'categories': 'N/A',
+            'barcode': None,
+            'extracted_text': ''
+        }
+
+    # ✅ Extract best text using advanced preprocessing and multi-OCR
+    final_text = extract_text_multiple_methods(image_path)
+
+    if not final_text.strip():
         logger.warning("No text extracted from image")
         return {
             'product_name': 'N/A',
@@ -377,22 +422,23 @@ def extract_product_info(image_path):
             'barcode': None,
             'extracted_text': ''
         }
-    
-    # Parse the extracted text
-    parsed_info = advanced_parse_ocr_text(extracted_text)
-    
-    # Try to extract barcode
+
+    # Parse structured info from the best OCR result
+    parsed_info = advanced_parse_ocr_text(final_text)
+
+    # Extract barcode separately
     try:
         barcode = extract_barcode(image_path)
         parsed_info['barcode'] = barcode
     except Exception as e:
         logger.warning(f"Barcode extraction failed: {e}")
         parsed_info['barcode'] = None
-    
-    # Add raw text for debugging
-    parsed_info['extracted_text'] = extracted_text
-    
+
+    # Store extracted raw text
+    parsed_info['extracted_text'] = final_text
+
     return parsed_info
+
 
 def extract_barcode(image_path):
     """Enhanced barcode extraction"""

@@ -7,3 +7,4 @@ pillow
 pytesseract
 spacy
 rapidfuzz
+textblob
