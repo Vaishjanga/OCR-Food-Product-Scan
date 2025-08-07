@@ -1,1 +1,0 @@
-Place your sample product images in this directory for testing the OCR and product lookup functionality.

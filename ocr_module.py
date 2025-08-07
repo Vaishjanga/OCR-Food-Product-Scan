@@ -26,7 +26,7 @@ except OSError:
     subprocess.run(['python', '-m', 'spacy', 'download', 'en_core_web_sm'])
     nlp = spacy.load('en_core_web_sm')
 
-# Enhanced fuzzy keyword lists with common OCR variations
+# fuzzy keyword lists with common OCR variations
 FUZZY_KEYWORDS = {
     'ingredients': [
         'ingredients', 'ingredlents', 'ingredlents:', 'lnqredients', 'ingred.', 
@@ -55,8 +55,8 @@ NUTRITION_KEYWORDS = [
     'cholesterol', 'sodium', 'carbohydrate', 'sugar', 'fiber', 'calcium',
     'iron', 'vitamin', 'kcal', 'kj', 'carbs', 'fibre'
 ]
-# 3. Fix fuzzy matching (around line 60-80)
-def enhanced_fuzzy_find_keyword(line, keyword_list, threshold=80):  # CHANGED: Increase from 70 to 80
+
+def enhanced_fuzzy_find_keyword(line, keyword_list, threshold=80): 
     """Enhanced fuzzy matching with better scoring"""
     line_lower = line.lower().strip()
     
@@ -65,7 +65,7 @@ def enhanced_fuzzy_find_keyword(line, keyword_list, threshold=80):  # CHANGED: I
         if kw.lower() in line_lower:
             return True
     
-    # ADDED: Check if line starts with keyword (common case)
+    # Check if line starts with keyword (common case)
     for kw in keyword_list:
         if line_lower.startswith(kw.lower()):
             return True
@@ -477,8 +477,6 @@ def ensure_dpi(img_path, min_dpi=200):  # Increased from 150 to 200
         if img:
             img.close()
 
-# Replace the extract_product_info function in your ocr_module.py
-
 def extract_product_info(image_path):
     """
     Main function to extract all product information with enhanced OCR and error handling
@@ -570,7 +568,7 @@ def extract_barcode(image_path):
     # Try multiple preprocessing approaches for barcode
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     
-    # IMPROVED: Better preprocessing for barcode detection
+    # Better preprocessing for barcode detection
     processed_images = [
         gray,
         cv2.GaussianBlur(gray, (3, 3), 0),
@@ -629,18 +627,5 @@ def extract_barcode(image_path):
     
     return None
 
-# Example usage
 if __name__ == "__main__":
-    # Test the enhanced extractor
-    image_path = "product_image.jpg"  # Replace with your image path
-    
-    result = extract_product_info(image_path)
-    
-    print("Extracted Product Information:")
-    print(f"Product Name: {result['product_name']}")
-    print(f"Brand: {result['brands']}")
-    print(f"Categories: {result['categories']}")
-    print(f"Ingredients: {result['ingredients_text']}")
-    print(f"Nutrition: {result['nutriments']}")
-    print(f"Barcode: {result['barcode']}")
-    print(f"\nRaw extracted text:\n{result['extracted_text']}")
+    pass
