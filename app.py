@@ -52,7 +52,6 @@ if uploaded_file:
                     'extracted_text': f'Error: {str(ocr_error)}'
                 }
 
-        # ADD THIS DEBUG SECTION:
         with st.expander("Debug Information (Click to expand)"):
             st.write("Raw Extracted Text:")
             st.text_area("OCR Output", value=extracted.get('extracted_text', 'No text extracted'), height=150)
@@ -153,4 +152,4 @@ if uploaded_file:
                             except:
                                 pass
         except Exception:
-            pass  # Silently ignore cleanup errors
+            pass  
